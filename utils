@@ -1,0 +1,29 @@
+#!/bin/bash
+
+utils_source=$(realpath utils)
+
+source_utils()
+{
+    source $utils_source
+}
+
+exe_name="seren-game"
+source_files="main.c"
+build_game()
+{
+    for f in "$source_files"; do
+        gcc $f -g -o $exe_name -I"$INCLUDE" -L"$LIB" -lm -lSDL2 -lSDL2_image
+    done
+}
+
+realpath_exe_name=$(realpath $exe_name)
+
+build_and_run_game()
+{
+    build_game && $realpath_exe_name
+}
+
+alias b="build_game"
+alias r=$realpath_exe_name
+alias br="build_and_run_game"
+alias s="source_utils"

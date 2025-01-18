@@ -22,3 +22,11 @@ typedef union v2 {
     };
     f32 e[2];
 } v2;
+
+v2 v2_add(v2 a, v2 b) { return (v2){ a.x + b.x, a.y + b.y }; }
+v2 v2_div(v2 vector, float scalar) {
+    return (scalar == 0.0f) ? (v2){0} : (v2){ vector.x / scalar, vector.y / scalar };
+}
+v2 v2_mult(v2 vector, float scalar) { return (v2){ vector.x * scalar, vector.y * scalar }; }
+float v2_mag(v2 vector) { return sqrtf(vector.x * vector.x + vector.y * vector.y); }
+v2 v2_normalized(v2 vector) { return v2_div(vector, v2_mag(vector)); }

@@ -1,5 +1,6 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
+#include <plibsys.h>
 #include <stdio.h>
 
 #include "seren.h" // Assuming this contains v2 struct and helper functions
@@ -19,6 +20,7 @@
 #define BLACK 0x0C1713
 
 #define ORIGIN_CENTERED (v2){ 0.5f, 0.5f }
+#define V2_ZERO (v2){ 0.0f, 0.0f }
 
 u64 time = 0ULL;
 
@@ -64,14 +66,57 @@ typedef struct gamestate {
 } gamestate;
 
 typedef struct renderres {
+    u32          missing_pixels[4];
+    SDL_Texture* missing;
     SDL_Texture* leaf;
+    u16          ash_index;
+#define ASH_SPRITE_COUNT 49
+    SDL_Texture* ash_sprites[ASH_SPRITE_COUNT];
+    v2           level_geometry[128];
 } renderres;
 
 void res_load(SDL_Renderer* renderer, renderres* res) {
+
+    res->missing_pixels[0] = res->missing_pixels[2] = 0x000000;
+    res->missing_pixels[1] = res->missing_pixels[3] = 0xFF00FF;
+    res->missing = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_STATIC, 2, 2);
+    SDL_UpdateTexture(res->missing, NULL, res->missing_pixels, 4 * sizeof(u32));
+
     res->leaf = IMG_LoadTexture(renderer, "res/leaf.png");
     if (!res->leaf) {
         printf("Failed to load image! IMG_Error: %s\n", IMG_GetError());
-        //fuschia
+        res->leaf = res->missing;
+    }
+
+    if (p_dir_is_exists("res/ash")) {
+        PDir* ash_dir = p_dir_new("res/ash", NULL);
+        PDirEntry* ent;
+        for (int i = 0; i < 53 && (ent = p_dir_get_next_entry(ash_dir, NULL)) != NULL; i++)
+        {
+            if (ent->name[0] == '.')
+            {
+                i--;
+                continue;
+            }
+
+            char buff[256];
+            snprintf(buff, 255, "res/ash/%s", ent->name);
+            res->ash_sprites[i] = IMG_LoadTexture(renderer, buff);
+            if (!res->ash_sprites[i]) {
+                printf("Failed to load image! IMG_Error: %s\n", IMG_GetError());
+                res->ash_sprites[i] = res->missing;
+            }
+
+            p_dir_entry_free(ent);
+        }
+    }
+
+    FILE* fd = fopen("res/level", "r");
+    if (fd == NULL)
+        fprintf(stderr, "failed to open \"res/level\"!\n");
+
+    for (int i = 0; i < 128 && fscanf(fd, "%f %f", &res->level_geometry[i].x, &res->level_geometry[i].y) == 2; i++) {
+        printf("%f %f\n", res->level_geometry[i].x, res->level_geometry[i].y);
     }
 }
 
@@ -109,7 +154,7 @@ void sdl_init(sdl_instance* sdl, renderres* res) {
     res_load(sdl->renderer, res);
 }
 
-void sdl_destroy(sdl_instance* sdl) {
+void sdl_shutdown(sdl_instance* sdl) {
     SDL_DestroyRenderer(sdl->renderer);
     SDL_DestroyWindow(sdl->window);
     SDL_Quit();
@@ -137,13 +182,32 @@ void render_player(SDL_Renderer* renderer, const camerastate* camera, const play
 }
 
 void render_leaf(SDL_Renderer* renderer, const camerastate* camera, const renderres* res, v2 world_pos) {
-    SDL_RenderCopy(renderer, res->leaf, NULL, NULL);
+    sdl_set_color(renderer, WHITE);
+    v2 leaf_transformed = v2_add(world_pos, camera_get_offset(camera));
+    SDL_Rect leaf_rect = {
+        (int)(leaf_transformed.x), (int)(leaf_transformed.y),
+        16, 16
+    };
+    SDL_RenderCopy(renderer, res->leaf, NULL, &leaf_rect);
+}
+
+void render_ash(SDL_Renderer* renderer, const camerastate* camera, const renderres* res, v2 world_pos) {
+    static u16 i = 0;
+    sdl_set_color(renderer, WHITE);
+    SDL_RenderCopy(renderer, res->ash_sprites[i], NULL, NULL);
+    i++;
+    i %= ASH_SPRITE_COUNT;
+}
+
+void render_lines() {
+    
 }
 
 void gamestate_render(SDL_Renderer* renderer, const renderres* res, const gamestate* state) {
     render_clear(renderer, BLACK);
     render_player(renderer, &state->camera, &state->player);
-    render_leaf(renderer, &state->camera, res, ORIGIN_CENTERED);
+    render_leaf(renderer, &state->camera, res, V2_ZERO);
+    render_ash(renderer, &state->camera, res, V2_ZERO);
     render_present(renderer, 16);
 }
 
@@ -177,6 +241,8 @@ void gamestate_init(gamestate* state) {
 
     state->player.pos.x = (SCREEN_WIDTH - SQUARE_SIZE) / 2.0f;
     state->player.pos.y = (SCREEN_HEIGHT - SQUARE_SIZE) / 2.0f;
+    state->player.pos.x = 0.0f;
+    state->player.pos.y = 0.0f;
 }
 
 void gamestate_update(gamestate* state, const events_info* events) {
@@ -184,15 +250,12 @@ void gamestate_update(gamestate* state, const events_info* events) {
     v2 velocity = v2_mult(move_normalized, PLAYER_SPEED);
     state->player.pos = v2_add(state->player.pos, velocity);
 
-    if (state->player.pos.x < 0) state->player.pos.x = 0.0f;
-    if (state->player.pos.y < 0) state->player.pos.y = 0.0f;
-    if (state->player.pos.x > SCREEN_WIDTH - SQUARE_SIZE) state->player.pos.x = SCREEN_WIDTH - SQUARE_SIZE;
-    if (state->player.pos.y > SCREEN_HEIGHT - SQUARE_SIZE) state->player.pos.y = SCREEN_HEIGHT - SQUARE_SIZE;
-
     state->camera.pos = v2_lerp(state->camera.pos, player_get_origin(&state->player), 0.05f);
 }
 
 int main(int argc, char *argv[]) {
+    p_libsys_init();
+
     sdl_instance sdl;
     renderres res;
     sdl_init(&sdl, &res);
@@ -207,7 +270,8 @@ int main(int argc, char *argv[]) {
         gamestate_render(sdl.renderer, &res, &state);
     }
 
-    sdl_destroy(&sdl);
+    sdl_shutdown(&sdl);
+    p_libsys_shutdown();
 
     return 0;
 }
